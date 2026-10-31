@@ -2554,7 +2554,7 @@ private extern(C++) final class DsymbolSemanticVisitor : Visitor
                 Type next = tsa.next.toBasetype();
                 if (next.ty == TY.Tchar || next.ty == TY.Twchar || next.ty == TY.Tdchar)
                 {
-                    tsa.dim = new IntegerExp(loc, se.len, Type.tsize_t);
+                    tsa.dim = new IntegerExp(loc, se.length, Type.tsize_t);
                     return true;
                 }
                 return false;
@@ -3428,8 +3428,6 @@ private extern(C++) final class DsymbolSemanticVisitor : Visitor
                     // https://issues.dlang.org/show_bug.cgi?id=14166
                     // Don't run CTFE for the temporary variables inside typeof
                     dsym._init = dsym._init.initializerSemantic(sc, dsym.type, sc.intypeof == 1 ? INITnointerpret : INITinterpret, global.errorSink);
-                    import dmd.semantic2 : lowerStaticAAs;
-                    lowerStaticAAs(dsym, sc);
                     auto init_err = dsym._init.isExpInitializer();
                     if (init_err && init_err.exp.op == EXP.showCtfeContext)
                     {
@@ -7966,6 +7964,23 @@ private extern(C++) class SearchVisitor : Visitor
                         if (s.isCsymbol() && s2.isCsymbol())
                             continue;
 
+                        /* A C symbol takes priority over an identically named
+                         * symbol from the implicit `object` import. Every
+                         * module (C ones included) is implicitly given
+                         * visibility of object's declarations, so object's
+                         * own convenience aliases (such as `size_t`) should
+                         * not conflict with an explicitly imported C header's
+                         * declaration of the same name.
+                         * https://issues.dlang.org/show_bug.cgi?id=20709
+                         */
+                        if (s.isCsymbol() && s2.getModule() && s2.getModule().ident == Id.object && !s2.getModule().parent)
+                            continue;
+                        if (s2.isCsymbol() && s.getModule() && s.getModule().ident == Id.object && !s.getModule().parent)
+                        {
+                            s = s2;
+                            continue;
+                        }
+
                         if (!(flags & SearchOpt.ignoreErrors))
                             ScopeDsymbol.multiplyDefined(loc, s, s2);
                         break;
@@ -10371,9 +10386,9 @@ bool _isZeroInit(Expression exp)
             auto se = cast(StringExp)exp;
 
             if (se.type.toBasetype().ty == Tarray) // if initializing a dynamic array
-                return se.len == 0;
+                return se.length == 0;
 
-            foreach (i; 0 .. se.len)
+            foreach (i; 0 .. se.length)
             {
                 if (se.getIndex(i) != 0)
                     return false;
